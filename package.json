@@ -1,0 +1,20 @@
+{
+  "name": "hello-board",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "pack": "npm run build && web-pack dist --name \"Piece Defense\" --icon icon.png -o hello-board.webapp.zip",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@board.fun/web-sdk": "^1.0.0-beta.5"
+  },
+  "devDependencies": {
+    "@board.fun/web-pack": "^1.0.0-beta.3",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.0"
+  }
+}

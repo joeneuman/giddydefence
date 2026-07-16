@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.webapp.zip
+
+# The Piece Set Model is downloaded from dev.board.fun, not committed.
+public/model.tflite
