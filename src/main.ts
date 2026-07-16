@@ -345,6 +345,30 @@ function toGame(clientX: number, clientY: number): [number, number] {
   ];
 }
 
+// ------------------------------------------------------------ camera zoom
+// Small screens pinch (or mouse-wheel) into the board; pinching back out
+// returns to full view. Never active on the Board itself — two fingers
+// there are two players.
+let camZoom = 1;
+let camX = GAME_W / 2;
+let camY = GAME_H / 2;
+let pinching = false;
+
+function clampCamera(): void {
+  const hw = GAME_W / (2 * camZoom);
+  const hh = GAME_H / (2 * camZoom);
+  camX = Math.max(hw, Math.min(GAME_W - hw, camX));
+  camY = Math.max(hh, Math.min(GAME_H - hh, camY));
+}
+
+// Canvas (letterboxed 1920×1080) point -> world point under the camera.
+function canvasToWorld(cx: number, cy: number): [number, number] {
+  return [
+    (cx - GAME_W / 2) / camZoom + camX,
+    (cy - GAME_H / 2) / camZoom + camY,
+  ];
+}
+
 // ------------------------------------------------------------- flow field
 
 // The board is a grid; active towers block cells; a BFS from the right edge
@@ -4096,6 +4120,12 @@ function drawHud(): void {
 }
 
 function draw(): void {
+  ctx.save();
+  // Camera: everything (world + UI) magnifies together; input inverse-maps
+  // through canvasToWorld so hit-tests stay honest at any zoom.
+  ctx.translate(GAME_W / 2, GAME_H / 2);
+  ctx.scale(camZoom, camZoom);
+  ctx.translate(-camX, -camY);
   ctx.fillStyle = COLOR_BG;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   drawField();
@@ -4109,6 +4139,7 @@ function draw(): void {
   drawTowerKey();
   drawWaveSummary();
   drawResetModal(); // above absolutely everything
+  ctx.restore();
 }
 
 function waveSummaryRect(): [number, number, number, number] {
@@ -4316,20 +4347,80 @@ if (Board.isOnDevice) {
   });
 } else {
   let nextFakeId = 1_000_000;
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+
+  const worldPoint = (clientX: number, clientY: number): [number, number] => {
+    const [gx, gy] = toGame(clientX, clientY);
+    return canvasToWorld(gx, gy);
+  };
+
   window.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     ensureAudio();
-    touchDown(...toGame(e.clientX, e.clientY), "mouse");
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      // Second finger = pinch. Abandon any build drag in progress.
+      const dragId = fingerDrags.get("mouse");
+      if (dragId !== undefined) {
+        cancelTower(dragId);
+        fingerDrags.delete("mouse");
+      }
+      pinching = true;
+      const [a, b] = [...pointers.values()];
+      pinchStartDist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      pinchStartZoom = camZoom;
+    } else if (pointers.size === 1) {
+      touchDown(...worldPoint(e.clientX, e.clientY), "mouse");
+    }
   });
   window.addEventListener("pointermove", (e) => {
-    if (e.buttons & 1) touchMove(...toGame(e.clientX, e.clientY), "mouse");
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinching && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const midX = (a.x + b.x) / 2;
+      const midY = (a.y + b.y) / 2;
+      const [wx, wy] = worldPoint(midX, midY); // world under the midpoint, pre-adjust
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      camZoom = Math.max(1, Math.min(3, pinchStartZoom * (dist / pinchStartDist)));
+      const [gx, gy] = toGame(midX, midY);
+      camX = wx - (gx - GAME_W / 2) / camZoom;
+      camY = wy - (gy - GAME_H / 2) / camZoom;
+      clampCamera();
+    } else if (!pinching && pointers.size === 1 && (e.buttons & 1 || e.pointerType !== "mouse")) {
+      touchMove(...worldPoint(e.clientX, e.clientY), "mouse");
+    }
   });
-  window.addEventListener("pointerup", (e) => {
-    if (e.button === 0) touchUp("mouse");
-  });
+  const liftPointer = (e: PointerEvent) => {
+    if (!pointers.delete(e.pointerId)) return;
+    if (pinching) {
+      if (pointers.size < 2) pinching = false;
+    } else if (pointers.size === 0) {
+      touchUp("mouse");
+    }
+  };
+  window.addEventListener("pointerup", liftPointer);
+  window.addEventListener("pointercancel", liftPointer);
+
+  // Desktop convenience: mouse wheel zooms around the cursor.
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const [wx, wy] = worldPoint(e.clientX, e.clientY);
+      camZoom = Math.max(1, Math.min(3, camZoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      const [gx, gy] = toGame(e.clientX, e.clientY);
+      camX = wx - (gx - GAME_W / 2) / camZoom;
+      camY = wy - (gy - GAME_H / 2) / camZoom;
+      clampCamera();
+    },
+    { passive: false },
+  );
+
   window.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    const [gx, gy] = toGame(e.clientX, e.clientY);
+    const [gx, gy] = worldPoint(e.clientX, e.clientY);
     for (const [cid, ship] of ships) {
       if (Math.hypot(ship.x - gx, ship.y - gy) <= TOWER_RADIUS) {
         // 30° per right-click — stays under the 45° ambiguity fold.

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Lock zoom so finger-drags build towers instead of pinching/panning the page. -->
+    <!-- Lock browser zoom — the game runs its own pinch-zoom camera. -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
@@ -25,7 +25,7 @@
         height: 100%;
         background: #152432;
         overflow: hidden;
-        /* Kill browser gestures (scroll bounce, pinch) so play doesn't fight the page. */
+        /* All gestures belong to the game (it has its own pinch camera). */
         touch-action: none;
         overscroll-behavior: none;
       }
