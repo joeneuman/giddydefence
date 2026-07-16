@@ -1,0 +1,14 @@
+{
+  "name": "GIDDY DIGS Defense",
+  "short_name": "GD Defense",
+  "description": "Tower defense — the towers are the maze. Build walls, funnels and kill boxes to hold the line.",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "start_url": "./",
+  "scope": "./",
+  "background_color": "#152432",
+  "theme_color": "#152432",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

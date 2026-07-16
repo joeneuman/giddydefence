@@ -2,8 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Lock zoom so finger-drags build towers instead of pinching/panning the page. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <title>GIDDY DIGS Defense</title>
+
+    <!-- Home-screen web-app: chrome-less launch on iOS + Android. -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="GD Defense" />
+    <meta name="theme-color" content="#152432" />
+    <link rel="apple-touch-icon" href="icon.png" />
+
     <style>
       html,
       body {
@@ -11,14 +25,97 @@
         height: 100%;
         background: #152432;
         overflow: hidden;
+        /* Kill browser gestures (scroll bounce, pinch) so play doesn't fight the page. */
+        touch-action: none;
+        overscroll-behavior: none;
       }
       canvas {
         display: block;
+      }
+
+      /* Portrait nudge — only on touch devices, never on desktop. */
+      #rotate-hint {
+        display: none;
+      }
+      @media (orientation: portrait) and (pointer: coarse) {
+        #game {
+          visibility: hidden;
+        }
+        #rotate-hint {
+          display: flex;
+          position: fixed;
+          inset: 0;
+          z-index: 10;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          background: #152432;
+          color: #e9ecf5;
+          font-family: system-ui, sans-serif;
+        }
+      }
+      #rotate-hint .icon {
+        font-size: 64px;
+        display: block;
+        margin-bottom: 14px;
+        animation: tip 2.2s ease-in-out infinite;
+      }
+      #rotate-hint b {
+        font-size: 20px;
+      }
+      #rotate-hint span {
+        display: block;
+        margin-top: 6px;
+        font-size: 14px;
+        color: #99a6bf;
+      }
+      @keyframes tip {
+        0%, 55% { transform: rotate(0deg); }
+        75%, 100% { transform: rotate(-90deg); }
       }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
+
+    <div id="rotate-hint" aria-hidden="true">
+      <div>
+        <span class="icon">&#x21BB;</span>
+        <b>Rotate your phone</b>
+        <span>GIDDY DIGS Defense plays in landscape.</span>
+      </div>
+    </div>
+
+    <script>
+      // On the first tap, go fullscreen and lock landscape where the platform
+      // allows it (Android Chrome). iOS ignores both in-tab and falls back to
+      // "Add to Home Screen" + the rotate hint above — so we try/catch and
+      // never let a rejected promise surface.
+      (function () {
+        function lockLandscape() {
+          try {
+            if (screen.orientation && screen.orientation.lock) {
+              screen.orientation.lock("landscape").catch(function () {});
+            }
+          } catch (e) {}
+        }
+        function goImmersive() {
+          var el = document.documentElement;
+          var req = el.requestFullscreen || el.webkitRequestFullscreen;
+          if (req && !document.fullscreenElement) {
+            try {
+              var p = req.call(el);
+              if (p && p.then) p.then(lockLandscape).catch(function () {});
+              else lockLandscape();
+            } catch (e) {}
+          } else {
+            lockLandscape();
+          }
+        }
+        window.addEventListener("pointerdown", goImmersive);
+      })();
+    </script>
+
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
