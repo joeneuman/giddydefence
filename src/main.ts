@@ -4415,6 +4415,8 @@ if (Board.isOnDevice) {
   const pointers = new Map<number, { x: number; y: number }>();
   let pinchStartDist = 0;
   let pinchStartZoom = 1;
+  let pinchWorldX = 0; // world point under the midpoint at pinch start —
+  let pinchWorldY = 0; // stays pinned under the fingers, so they pan too
 
   const worldPoint = (clientX: number, clientY: number): [number, number] => {
     const [gx, gy] = toGame(clientX, clientY);
@@ -4436,6 +4438,7 @@ if (Board.isOnDevice) {
       const [a, b] = [...pointers.values()];
       pinchStartDist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
       pinchStartZoom = camZoom;
+      [pinchWorldX, pinchWorldY] = worldPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
     } else if (pointers.size === 1) {
       touchDown(...worldPoint(e.clientX, e.clientY), "mouse");
     }
@@ -4446,12 +4449,13 @@ if (Board.isOnDevice) {
       const [a, b] = [...pointers.values()];
       const midX = (a.x + b.x) / 2;
       const midY = (a.y + b.y) / 2;
-      const [wx, wy] = worldPoint(midX, midY); // world under the midpoint, pre-adjust
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       camZoom = Math.max(1, Math.min(3, pinchStartZoom * (dist / pinchStartDist)));
+      // The world point grabbed at pinch start stays pinned under the
+      // fingers' midpoint: spreading zooms, sliding both fingers pans.
       const [gx, gy] = toGame(midX, midY);
-      camX = wx - (gx - GAME_W / 2) / camZoom;
-      camY = wy - (gy - GAME_H / 2) / camZoom;
+      camX = pinchWorldX - (gx - GAME_W / 2) / camZoom;
+      camY = pinchWorldY - (gy - GAME_H / 2) / camZoom;
       clampCamera();
     } else if (!pinching && pointers.size === 1 && (e.buttons & 1 || e.pointerType !== "mouse")) {
       touchMove(...worldPoint(e.clientX, e.clientY), "mouse");
