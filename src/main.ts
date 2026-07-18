@@ -475,7 +475,7 @@ function buildPathCells(): Set<number> {
   return set;
 }
 
-function computeBlocked(extra?: { x: number; y: number }): Uint8Array {
+function computeBlocked(extras?: Array<{ x: number; y: number }>): Uint8Array {
   const grid = new Uint8Array(cols * rows);
   if (gameMode === "path") {
     // Everything off the road is out of bounds for creeps; towers never
@@ -505,7 +505,7 @@ function computeBlocked(extra?: { x: number; y: number }): Uint8Array {
     // Poison is an ooze puddle on the ground — creeps walk through it.
     if (t.state === "active" && t.type !== "poison") obstacles.push({ x: t.x, y: t.y });
   }
-  if (extra) obstacles.push(extra);
+  if (extras) obstacles.push(...extras);
   // Circular blocking at the true physical radius — a square box casts a
   // far fatter shadow than the tower's round footprint.
   const blockR = TOWER_RADIUS + CREEP_CLEARANCE;
@@ -585,7 +585,7 @@ function placementLegal(x: number, y: number): boolean {
     }
     return true;
   }
-  const grid = computeBlocked({ x, y });
+  const grid = computeBlocked([{ x, y }]);
   const dist = computeFlow(grid);
   let spawnOk = false;
   for (const cy of gateRows()) {
@@ -611,9 +611,16 @@ function remainingFor(x: number, y: number): number {
 }
 
 // Direction an enemy at (x, y) should walk: toward the best 8-neighbor.
-function flowDirection(x: number, y: number): [number, number] {
+// Pass a grid/dist pair to walk a hypothetical field (the route preview);
+// defaults to the live one.
+function flowDirection(
+  x: number,
+  y: number,
+  grid: Uint8Array = blocked,
+  dist: Float64Array = flowDist,
+): [number, number] {
   const [cx, cy] = cellAt(x, y);
-  const here = flowDist[cellIndex(cx, cy)];
+  const here = dist[cellIndex(cx, cy)];
   if (here === Infinity) return [1, 0]; // trapped/unknown: shamble right
   if (here === 0) return [1, 0]; // on the exit column: walk off the edge
   let best = here;
@@ -625,13 +632,13 @@ function flowDirection(x: number, y: number): [number, number] {
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
-      if (blocked[cellIndex(nx, ny)]) continue;
+      if (grid[cellIndex(nx, ny)]) continue;
       // Diagonals only when both orthogonal neighbors are open (no corner
       // clipping through a tower).
       if (dx !== 0 && dy !== 0) {
-        if (blocked[cellIndex(cx + dx, cy)] || blocked[cellIndex(cx, cy + dy)]) continue;
+        if (grid[cellIndex(cx + dx, cy)] || grid[cellIndex(cx, cy + dy)]) continue;
       }
-      const nd = flowDist[cellIndex(nx, ny)] + (dx !== 0 && dy !== 0 ? 0.4 : 0);
+      const nd = dist[cellIndex(nx, ny)] + (dx !== 0 && dy !== 0 ? 0.4 : 0);
       if (nd < best) {
         best = nd;
         bx = nx;
@@ -2002,6 +2009,20 @@ function handleTap(x: number, y: number): boolean {
 // to the grid) until the finger lifts — then the type menu opens.
 const fingerDrags = new Map<number | string, number>(); // fingerId -> towerId
 
+// The ghost rides one finger-width FARTHER from the board center than the
+// fingertip — out toward the edge, on the center→finger line — so the hand
+// reaching in from the edge never covers the spot being placed.
+const GHOST_FINGER_GAP = 65; // ~one finger width on the 23.8" board
+
+function ghostSpotFor(x: number, y: number): [number, number] {
+  const dx = x - GAME_W / 2;
+  const dy = y - GAME_H / 2;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return [x, y]; // finger dead-center: no direction to offset
+  const push = GHOST_FINGER_GAP + TOWER_RADIUS;
+  return [x + (dx / len) * push, y + (dy / len) * push];
+}
+
 function touchDown(x: number, y: number, fingerId: number | string): void {
   if (handleTap(x, y)) return;
   if (phase === "gameover" || phase === "victory") return;
@@ -2012,7 +2033,8 @@ function touchDown(x: number, y: number, fingerId: number | string): void {
   closeAllMenus();
   // The ghost wears the last-placed tower's look (and radius) so a second
   // finger can confirm an instant repeat buy.
-  const id = proposeTower(x, y, lastPlacedType ?? "wall", undefined, false, false);
+  const [gx, gy] = ghostSpotFor(x, y);
+  const id = proposeTower(gx, gy, lastPlacedType ?? "wall", undefined, false, false);
   const t = towers.get(id)!;
   t.expireAt = 0; // no expiry while held
   fingerDrags.set(fingerId, id);
@@ -2030,8 +2052,9 @@ function touchMove(x: number, y: number, fingerId: number | string): void {
   // The ghost refuses to enter occupied space OR a spot that would choke
   // off the creeps' path — it waits at its last good spot, so the player
   // learns "too close" while dragging, not at the moment of purchase.
-  const nx = snapX(x);
-  const ny = snapY(y);
+  const [gx, gy] = ghostSpotFor(x, y);
+  const nx = snapX(gx);
+  const ny = snapY(gy);
   if ((nx !== t.x || ny !== t.y) && spotIsFree(nx, ny, id) && ghostSpotLegal(t, nx, ny)) {
     t.x = nx;
     t.y = ny;
@@ -2818,24 +2841,66 @@ function drawField(): void {
     }
   }
 
-  // Dotted preview of the route enemies take from the IN gate.
+  // Dotted preview of the route enemies take from the IN gate. While a
+  // build ghost is pending, a second flow field that counts the ghost as
+  // built shows where the creeps WOULD go — the reroute is visible before
+  // the buy. The old route stays as a faint trace for comparison.
   const row = gates[Math.floor(gates.length / 2)];
-  let x = CELL / 2;
-  let y = row * CELL + CELL / 2;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  for (let steps = 0; steps < 900 && x < canvas.width - CELL; steps++) {
-    const [dx, dy] = flowDirection(x, y);
-    x += dx * CELL * 0.6;
-    y += dy * CELL * 0.6;
-    ctx.lineTo(x, y);
+  const traceRoute = (grid: Uint8Array, dist: Float64Array) => {
+    let x = CELL / 2;
+    let y = row * CELL + CELL / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let steps = 0; steps < 900 && x < canvas.width - CELL; steps++) {
+      const [dx, dy] = flowDirection(x, y, grid, dist);
+      x += dx * CELL * 0.6;
+      y += dy * CELL * 0.6;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineWidth = 3;
+    ctx.setLineDash([14, 16]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  const preview = previewFlow();
+  if (preview) {
+    // Old route, dimmed — then the rerouted path, bright, over the top.
+    ctx.strokeStyle = "rgba(236,184,74,0.12)";
+    traceRoute(blocked, flowDist);
+    ctx.strokeStyle = "rgba(122,212,255,0.55)";
+    traceRoute(preview.grid, preview.dist);
+  } else {
+    // The route preview doubles as the road's painted center line.
+    ctx.strokeStyle = "rgba(236,184,74,0.3)";
+    traceRoute(blocked, flowDist);
   }
-  // The route preview doubles as the road's painted center line.
-  ctx.strokeStyle = "rgba(236,184,74,0.3)";
-  ctx.lineWidth = 3;
-  ctx.setLineDash([14, 16]);
-  ctx.stroke();
-  ctx.setLineDash([]);
+}
+
+// The what-if flow field for pending proposals, cached per ghost spot so a
+// held finger doesn't re-run the BFS every frame. Null when nothing is
+// pending (or in FIXED PATH mode, where towers can't bend the road).
+let previewFlowKey = "";
+let previewFlowCache: { grid: Uint8Array; dist: Float64Array } | null = null;
+
+function previewFlow(): { grid: Uint8Array; dist: Float64Array } | null {
+  if (gameMode === "path") return null;
+  const ghosts: Array<{ x: number; y: number }> = [];
+  for (const t of towers.values()) {
+    // Poison never blocks, so it never bends the path.
+    if (t.state === "proposed" && t.type !== "poison") ghosts.push({ x: t.x, y: t.y });
+  }
+  if (ghosts.length === 0) {
+    previewFlowKey = "";
+    previewFlowCache = null;
+    return null;
+  }
+  const key = ghosts.map((g) => `${g.x},${g.y}`).join(";") + `|${towers.size}`;
+  if (key !== previewFlowKey || !previewFlowCache) {
+    previewFlowKey = key;
+    const grid = computeBlocked(ghosts);
+    previewFlowCache = { grid, dist: computeFlow(grid) };
+  }
+  return previewFlowCache;
 }
 
 // A tower's body: every type is a DIFFERENT building on the block.
